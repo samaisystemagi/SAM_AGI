@@ -1117,6 +1117,38 @@ class FileProcessor:
         if len(sections) > 20:
             patterns['well_structured'] = f"{len(sections)} document sections"
         
+        # Pattern 13: Large file processing
+        if self.metrics.get('total_chars', 0) > 100000:
+            patterns['large_document'] = f"{self.metrics['total_chars']:,} characters processed"
+        
+        # Pattern 14: Multi-chunk processing
+        if len(self.processed_chunks) > 20:
+            patterns['complex_document'] = f"{len(self.processed_chunks)} chunks analyzed"
+        
+        # Pattern 15: Rich entity diversity
+        entity_types = set()
+        for e in all_entities:
+            if ':' in e:
+                entity_types.add(e.split(':')[0])
+        if len(entity_types) > 5:
+            patterns['diverse_entities'] = f"{len(entity_types)} entity types identified"
+        
+        # Pattern 16: Action-oriented content
+        action_keywords = ['TODO', 'FIXME', 'implement', 'create', 'build', 'fix']
+        action_count = sum(1 for kp in all_key_points if any(kw in kp for kw in action_keywords))
+        if action_count > 10:
+            patterns['action_oriented'] = f"{action_count} action items identified"
+        
+        # Pattern 17: Technical documentation
+        doc_patterns = ['README', 'API', 'documentation', 'guide', 'tutorial']
+        if any(p in all_content for p in doc_patterns):
+            patterns['technical_documentation'] = "Technical documentation detected"
+        
+        # Pattern 18: Semantic richness
+        avg_entity_length = sum(len(e) for e in all_entities) / max(len(all_entities), 1)
+        if avg_entity_length > 15:
+            patterns['semantically_rich'] = f"Rich semantic content (avg {avg_entity_length:.1f} chars)"
+        
         self.artifacts['patterns'] = patterns
     
     def _check_constraints(self) -> List[str]:
