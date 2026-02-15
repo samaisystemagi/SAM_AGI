@@ -22,9 +22,10 @@ from collections import defaultdict
 import hashlib
 
 # Configuration
-MAX_ITERATIONS = 5
+DEFAULT_MAX_ITERATIONS = 100  # Default - can be overridden via command line
+UNBOUNDED_MODE = -1  # Special value for unlimited iterations
 CHUNK_SIZE = 5000  # Characters per chunk
-MIN_IMPROVEMENT = 0.1  # Minimum improvement to continue iterating
+MIN_IMPROVEMENT = 0.02  # Lower threshold - continue until marginal gains
 
 def print_section(title, char="="):
     print(f"\n{char*70}")
@@ -1416,12 +1417,50 @@ class TriCameralGovernance:
         )
 
 async def main():
+    """Simplified command line interface with numeric arguments only."""
     if len(sys.argv) < 2:
-        print("Usage: python3 automation_master_real.py <file_path>")
-        print("Example: python3 automation_master_real.py ChatGPT_2026-02-14-LATEST.txt")
+        print("Usage: python3 automation_master_real.py <file_path> [max_iterations] [target_completeness%]")
+        print("\nSimple Examples:")
+        print("  python3 automation_master_real.py file.txt                    # Default: 100 iterations")
+        print("  python3 automation_master_real.py file.txt -1                 # Unbounded mode (no limit)")
+        print("  python3 automation_master_real.py file.txt 50                 # Max 50 iterations")
+        print("  python3 automation_master_real.py file.txt -1 95              # Unbounded, stop at 95%")
+        print("  python3 automation_master_real.py file.txt 200 100            # Max 200, stop at 100%")
         sys.exit(1)
     
     file_path = sys.argv[1]
+    
+    # Parse max_iterations (arg 2) - simple number, -1 for unbounded
+    if len(sys.argv) >= 3:
+        try:
+            max_iterations = int(sys.argv[2])
+            if max_iterations == -1:
+                print("🔓 UNBOUNDED MODE: Running until target reached (no iteration limit)")
+                max_iterations = float('inf')
+            elif max_iterations <= 0:
+                print(f"⚠️  Invalid max_iterations. Using default: {DEFAULT_MAX_ITERATIONS}")
+                max_iterations = DEFAULT_MAX_ITERATIONS
+            else:
+                print(f"📊 Max iterations: {max_iterations}")
+        except ValueError:
+            print(f"⚠️  Invalid max_iterations. Using default: {DEFAULT_MAX_ITERATIONS}")
+            max_iterations = DEFAULT_MAX_ITERATIONS
+    else:
+        max_iterations = DEFAULT_MAX_ITERATIONS
+        print(f"📊 Default iterations: {max_iterations}")
+    
+    # Parse target completeness percentage (arg 3) - simple number 0-100
+    target_completeness = None
+    if len(sys.argv) >= 4:
+        try:
+            target_percent = float(sys.argv[3])
+            if 0 < target_percent <= 100:
+                target_completeness = target_percent / 100.0  # Convert to 0-1 range
+                print(f"🎯 Target: Stop at {target_percent:.0f}% completeness")
+            else:
+                print(f"⚠️  Target must be 1-100. Ignoring.")
+        except ValueError:
+            print(f"⚠️  Invalid target percentage. Ignoring.")
     
     print("🚀" * 35)
     print("  AUTOMATION FRAMEWORK - REAL FILE PROCESSING")
@@ -1452,13 +1491,15 @@ async def main():
     print("=" * 70)
     
     iteration = 0
-    max_iterations = MAX_ITERATIONS
     previous_quality = 0.0
     
     while iteration < max_iterations:
         iteration += 1
         print(f"\n{'='*70}")
-        print(f"  ITERATION {iteration}/{max_iterations}")
+        if max_iterations == float('inf'):
+            print(f"  ITERATION {iteration}/∞ (UNBOUNDED)")
+        else:
+            print(f"  ITERATION {iteration}/{max_iterations}")
         print(f"{'='*70}")
         
         # Phase 1: Planning
@@ -1593,6 +1634,13 @@ async def main():
         print(f"      - Entities: {meta.get('soft_invariants_captured', {}).get('entities', 0)}")
         print(f"      - Key Points: {meta.get('soft_invariants_captured', {}).get('key_points', 0)}")
         print(f"      - Patterns: {meta.get('soft_invariants_captured', {}).get('patterns', 0)}")
+        
+        # === TARGET COMPLETENESS CHECK ===
+        if target_completeness is not None and completeness >= target_completeness:
+            print(f"\n🎯 TARGET REACHED!")
+            print(f"   Completeness: {completeness:.1%} >= {target_completeness:.1%}")
+            print(f"   Stopping at iteration {iteration}")
+            break
         
         # SAM-Style Stopping Criteria with advanced systems
         # Target: 95-98% of achievable completeness (acknowledging hard invariants)
