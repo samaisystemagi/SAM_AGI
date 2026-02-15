@@ -190,6 +190,10 @@ class SAMCore:
     def _load_sam_library(self):
         """Load SAM C library"""
         lib_paths = [
+            Path(__file__).parent / "libsam_nn.dylib",  # Local copy
+            Path(__file__).parent / "libsam_nn.so",
+            SAM_DIR / "libsam_nn.dylib",
+            SAM_DIR / "libsam_nn.so",
             SAM_DIR / "libsam.so",
             SAM_DIR / "libsam.dylib",
             UTILS_DIR / "libsam.so",
@@ -211,30 +215,51 @@ class SAMCore:
         self._init_python_fallback()
     
     def _setup_functions(self):
-        """Setup C function signatures"""
+        """Setup C function signatures for stub library"""
         if not self.lib:
             return
         
-        # Define function signatures
+        # Define function signatures for stub library
         try:
-            # SAM_create
-            self.lib.SAM_create.argtypes = [ctypes.c_size_t]
-            self.lib.SAM_create.restype = ctypes.POINTER(CSAMState)
+            # sam_create
+            self.lib.sam_create.argtypes = [ctypes.c_int]
+            self.lib.sam_create.restype = ctypes.c_void_p
             
-            # SAM_step
-            self.lib.SAM_step.argtypes = [
-                ctypes.POINTER(CSAMState),
+            # sam_destroy
+            self.lib.sam_destroy.argtypes = [ctypes.c_void_p]
+            self.lib.sam_destroy.restype = None
+            
+            # sam_step
+            self.lib.sam_step.argtypes = [
+                ctypes.c_void_p,
                 ctypes.POINTER(ctypes.c_double),
-                ctypes.POINTER(ctypes.c_double)
+                ctypes.c_double
             ]
-            self.lib.SAM_step.restype = ctypes.c_int
+            self.lib.sam_step.restype = None
             
-            # SAM_destroy
-            self.lib.SAM_destroy.argtypes = [ctypes.POINTER(CSAMState)]
-            self.lib.SAM_destroy.restype = None
+            # sam_check_invariants
+            self.lib.sam_check_invariants.argtypes = [ctypes.c_void_p]
+            self.lib.sam_check_invariants.restype = ctypes.c_int
+            
+            # sam_get_uncertainty
+            self.lib.sam_get_uncertainty.argtypes = [ctypes.c_void_p]
+            self.lib.sam_get_uncertainty.restype = ctypes.c_double
+            
+            # sam_get_step_count
+            self.lib.sam_get_step_count.argtypes = [ctypes.c_void_p]
+            self.lib.sam_get_step_count.restype = ctypes.c_int
+            
+            # sam_grow
+            self.lib.sam_grow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            self.lib.sam_grow.restype = ctypes.c_int
+            
+            # Create C state
+            self.c_state = self.lib.sam_create(self.latent_dim)
+            print(f"   Created C SAM state: {self.c_state}")
             
         except AttributeError as e:
             print(f"⚠️  Some C functions not found: {e}")
+            self.lib = None
     
     def _init_python_fallback(self):
         """Initialize pure Python SAM state when C lib not available"""
@@ -250,7 +275,7 @@ class SAMCore:
     
     def step(self, observation: np.ndarray, gradient: np.ndarray) -> Dict[str, Any]:
         """Execute one SAM step"""
-        if self.lib and hasattr(self.lib, 'SAM_step'):
+        if self.lib and self.c_state:
             # Use C implementation
             return self._c_step(observation, gradient)
         else:
@@ -258,17 +283,30 @@ class SAMCore:
             return self._python_step(observation, gradient)
     
     def _c_step(self, obs: np.ndarray, grad: np.ndarray) -> Dict[str, Any]:
-        """C implementation step"""
-        # Convert numpy to C arrays
-        obs_ctype = obs.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-        grad_ctype = grad.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+        """C implementation step using stub library"""
+        # Convert numpy to C array
+        obs_flat = obs.flatten()[:self.latent_dim]
+        if len(obs_flat) < self.latent_dim:
+            obs_flat = np.pad(obs_flat, (0, self.latent_dim - len(obs_flat)))
         
-        # Call C function
-        result = self.lib.SAM_step(self.state, obs_ctype, grad_ctype)
+        obs_ctype = obs_flat.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+        
+        # Call C function (reward is sum of gradients as proxy)
+        reward = float(np.sum(grad))
+        self.lib.sam_step(self.c_state, obs_ctype, reward)
+        
+        # Check invariants
+        invariants_ok = self.lib.sam_check_invariants(self.c_state)
+        
+        # Get metrics
+        uncertainty = self.lib.sam_get_uncertainty(self.c_state)
+        step_count = self.lib.sam_get_step_count(self.c_state)
         
         return {
-            'success': result == 0,
-            'state': self._extract_state(),
+            'success': True,
+            'invariants_ok': invariants_ok == 1,
+            'unsolvability': uncertainty,
+            'step_count': step_count,
         }
     
     def _python_step(self, obs: np.ndarray, grad: np.ndarray) -> Dict[str, Any]:

@@ -20,6 +20,16 @@ from enum import Enum
 import concurrent.futures
 from collections import defaultdict
 import hashlib
+import numpy as np
+
+# SAM Neural Integration
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from sam_c_bridge import get_bridge
+    SAM_AVAILABLE = True
+except ImportError:
+    SAM_AVAILABLE = False
+    print("⚠️  SAM bridge not available")
 
 # Configuration
 DEFAULT_MAX_ITERATIONS = 100  # Default - can be overridden via command line
@@ -544,6 +554,17 @@ class FileProcessor:
         
         # Global meta-agent controller (monitors across contexts)
         self.meta_controller = None  # Will be set by orchestrator
+        
+        # SAM Neural Integration
+        self.sam_bridge = None
+        self.sam_enabled = SAM_AVAILABLE
+        if self.sam_enabled:
+            try:
+                self.sam_bridge = get_bridge()
+                print(f"   🧠 SAM Bridge initialized")
+            except Exception as e:
+                print(f"   ⚠️  SAM Bridge failed: {e}")
+                self.sam_enabled = False
     
     def load_file(self) -> bool:
         """Actually load and analyze the file"""
@@ -679,6 +700,32 @@ class FileProcessor:
         # Sort by index
         processed_results.sort(key=lambda x: x[0])
         self.processed_chunks = [r[1] for r in processed_results]
+        
+        # === SAM NEURAL PROCESSING ===
+        if self.sam_enabled and self.sam_bridge:
+            print(f"\n🧠 Processing with SAM Neural Core...")
+            if not self.sam_bridge.initialized:
+                self.sam_bridge.initialize(latent_dim=64, optimizer_type='adam')
+            
+            sam_results = []
+            for i, chunk_result in enumerate(self.processed_chunks):
+                if isinstance(chunk_result, dict) and 'entities' in chunk_result:
+                    # Convert chunk to observation
+                    chunk_text = str(chunk_result.get('summary', ''))
+                    chunk_bytes = chunk_text.encode('utf-8')
+                    chunk_obs = np.frombuffer(chunk_bytes[:256].ljust(256, b'\x00'), dtype=np.uint8).astype(np.float64) / 255.0
+                    
+                    # Process with SAM
+                    sam_result = self.sam_bridge.process_chunk_with_sam(chunk_obs, self.current_iteration)
+                    sam_results.append(sam_result)
+            
+            # Aggregate SAM metrics
+            if sam_results:
+                avg_uncertainty = sum(r.get('unsolvability', 0) for r in sam_results) / len(sam_results)
+                self.artifacts['sam_uncertainty'] = avg_uncertainty
+                self.artifacts['sam_processed'] = len(sam_results)
+                print(f"   ✅ SAM processed {len(sam_results)} chunks")
+                print(f"   📊 Avg uncertainty: {avg_uncertainty:.4f}")
         
         # Aggregate results
         self._aggregate_results()

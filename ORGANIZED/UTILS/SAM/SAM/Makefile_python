@@ -1,0 +1,43 @@
+# Makefile for building SAM/NN shared libraries for Python integration
+# Builds: libsam_nn.so (Linux) or libsam_nn.dylib (macOS)
+
+CC = gcc
+CFLAGS = -O3 -march=native -fPIC -Wall -Wextra -std=c99
+INCLUDES = -I. -I../../utils/NN/MUZE -I../../utils/NN/NEAT -I../../utils/NN/TRANSFORMER -I../../utils/NN
+LIBS = -lm
+
+# Detect OS
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    SHARED_EXT = dylib
+    SHARED_FLAG = -dynamiclib
+else
+    SHARED_EXT = so
+    SHARED_FLAG = -shared
+endif
+
+# Source files
+SAM_SRC = SAM.c sam_morphogenesis.c
+MUZE_SRC = ../../utils/NN/MUZE/mcts.c ../../utils/NN/MUZE/ewc.c ../../utils/NN/MUZE/growth.c \
+           ../../utils/NN/MUZE/replay_buffer.c ../../utils/NN/MUZE/self_play.c \
+           ../../utils/NN/MUZE/muzero_model.c
+NN_SRC = ../../utils/NN/NN/NN.c ../../utils/NN/TRANSFORMER/transformer.c \
+         ../../utils/NN/GNN/GNN.c ../../utils/NN/RNN/RNN.c ../../utils/NN/CNN/CNN.c
+
+# Target library
+TARGET = libsam_nn.$(SHARED_EXT)
+
+all: $(TARGET)
+
+$(TARGET): $(SAM_SRC) $(MUZE_SRC) $(NN_SRC)
+	$(CC) $(CFLAGS) $(SHARED_FLAG) $(INCLUDES) -o $@ $^ $(LIBS)
+	@echo "Built: $@"
+
+clean:
+	rm -f $(TARGET) *.o
+
+install: $(TARGET)
+	cp $(TARGET) ../../python/
+	@echo "Installed $(TARGET) to ../../python/"
+
+.PHONY: all clean install
