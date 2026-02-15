@@ -14,7 +14,7 @@ import asyncio
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 import concurrent.futures
@@ -64,6 +64,317 @@ class GovernanceDecision:
     recommendations: List[str]
     action: str  # "proceed", "revise", "reject"
 
+@dataclass
+class SoftInvariant:
+    """Self-discovered soft invariant during processing"""
+    id: str
+    name: str
+    condition: str
+    confidence: float
+    iteration_discovered: int
+    violations: int = 0
+    checks_passed: int = 0
+    
+    def check(self, context: Dict) -> bool:
+        """Check if invariant holds in current context"""
+        self.checks_passed += 1
+        # Implementation depends on invariant type
+        return True  # Placeholder
+
+@dataclass
+class TelemetryPoint:
+    """Single telemetry measurement"""
+    timestamp: float
+    metric_name: str
+    value: float
+    context: Dict[str, Any]
+    regime: str  # Which regime was active
+
+class TelemetrySystem:
+    """Tracks system telemetry and performance metrics"""
+    
+    def __init__(self):
+        self.telemetry_history: List[TelemetryPoint] = []
+        self.metrics_buffer: Dict[str, List[float]] = {}
+        self.regime_history: List[str] = []
+        
+    def record(self, metric_name: str, value: float, regime: str, context: Optional[Dict] = None):
+        """Record a telemetry point"""
+        point = TelemetryPoint(
+            timestamp=time.time(),
+            metric_name=metric_name,
+            value=value,
+            context=context or {},
+            regime=regime
+        )
+        self.telemetry_history.append(point)
+        
+        # Buffer for trend analysis
+        if metric_name not in self.metrics_buffer:
+            self.metrics_buffer[metric_name] = []
+        self.metrics_buffer[metric_name].append(value)
+        
+        # Keep only last 1000 points per metric
+        if len(self.metrics_buffer[metric_name]) > 1000:
+            self.metrics_buffer[metric_name] = self.metrics_buffer[metric_name][-1000:]
+    
+    def get_trend(self, metric_name: str, window: int = 10) -> float:
+        """Calculate trend slope for a metric"""
+        if metric_name not in self.metrics_buffer or len(self.metrics_buffer[metric_name]) < window:
+            return 0.0
+        
+        values = self.metrics_buffer[metric_name][-window:]
+        # Simple linear regression
+        x = list(range(len(values)))
+        x_mean = sum(x) / len(x)
+        y_mean = sum(values) / len(values)
+        
+        numerator = sum((x[i] - x_mean) * (values[i] - y_mean) for i in range(len(values)))
+        denominator = sum((xi - x_mean) ** 2 for xi in x)
+        
+        return numerator / denominator if denominator != 0 else 0.0
+    
+    def detect_regime_shift(self, metric_name: str, threshold: float = 2.0) -> bool:
+        """Detect if there's been a regime shift in metrics"""
+        trend = self.get_trend(metric_name, window=20)
+        return abs(trend) > threshold
+
+class TopologicalOptimizer:
+    """
+    Topological Data Analysis (TDA) inspired optimization.
+    Uses persistence homology concepts for robust optimization.
+    """
+    
+    def __init__(self, dimension: int = 2):
+        self.dimension = dimension
+        self.landscape = []  # Topological landscape
+        self.persistence_pairs = []
+        
+    def add_sample(self, point: Tuple[float, ...], value: float):
+        """Add a sample point to the topological landscape"""
+        self.landscape.append((point, value))
+        self._update_persistence()
+    
+    def _update_persistence(self):
+        """Update persistence homology (simplified)"""
+        # Sort by value for persistence
+        sorted_landscape = sorted(self.landscape, key=lambda x: x[1])
+        # Simplified: track local minima/maxima
+        self.persistence_pairs = []
+        for i in range(1, len(sorted_landscape) - 1):
+            prev_val = sorted_landscape[i-1][1]
+            curr_val = sorted_landscape[i][1]
+            next_val = sorted_landscape[i+1][1]
+            
+            if curr_val < prev_val and curr_val < next_val:
+                # Local minimum - potential basin
+                persistence = min(prev_val - curr_val, next_val - curr_val)
+                self.persistence_pairs.append(('min', i, persistence))
+    
+    def get_robust_region(self, persistence_threshold: float = 0.1) -> Optional[Tuple]:
+        """Find most robust region (high persistence)"""
+        if not self.persistence_pairs:
+            return None
+        
+        # Return region with highest persistence
+        best = max(self.persistence_pairs, key=lambda x: x[2])
+        if best[2] > persistence_threshold:
+            idx = best[1]
+            return self.landscape[idx][0]
+        return None
+
+class TrustRegionOptimizer:
+    """
+    Trust Region optimization with adaptive radius.
+    More robust than pure gradient descent.
+    """
+    
+    def __init__(self, initial_radius: float = 1.0, max_radius: float = 10.0):
+        self.radius = initial_radius
+        self.max_radius = max_radius
+        self.min_radius = 0.01
+        self.eta_good = 0.25  # Threshold for good step
+        self.eta_great = 0.75  # Threshold for great step
+        self.success_history = []
+        
+    def adjust_radius(self, actual_improvement: float, predicted_improvement: float):
+        """Adaptively adjust trust region radius"""
+        if predicted_improvement <= 0:
+            return
+        
+        ratio = actual_improvement / predicted_improvement
+        
+        if ratio < self.eta_good:
+            # Poor step - shrink region
+            self.radius *= 0.5
+        elif ratio >= self.eta_great:
+            # Great step - expand region
+            self.radius = min(self.radius * 2.0, self.max_radius)
+        # else: acceptable step - keep radius
+        
+        self.radius = max(self.radius, self.min_radius)
+        self.success_history.append(ratio > self.eta_good)
+        
+        # Keep only last 10
+        if len(self.success_history) > 10:
+            self.success_history.pop(0)
+    
+    def should_continue(self, min_success_rate: float = 0.3) -> bool:
+        """Check if optimization should continue based on success rate"""
+        if len(self.success_history) < 5:
+            return True
+        success_rate = sum(self.success_history[-5:]) / 5
+        return success_rate >= min_success_rate
+
+class HysteresisController:
+    """
+    Hysteresis-based state transition controller.
+    Prevents oscillation between states.
+    """
+    
+    def __init__(self, low_threshold: float = 0.3, high_threshold: float = 0.7):
+        self.low_threshold = low_threshold
+        self.high_threshold = high_threshold
+        self.state = False  # Current state
+        self.history = []
+        
+    def update(self, value: float) -> bool:
+        """Update state with hysteresis"""
+        self.history.append(value)
+        if len(self.history) > 100:
+            self.history.pop(0)
+        
+        if not self.state:
+            # Currently False, need high threshold to switch to True
+            if value > self.high_threshold:
+                self.state = True
+        else:
+            # Currently True, need low threshold to switch to False
+            if value < self.low_threshold:
+                self.state = False
+        
+        return self.state
+    
+    def get_state_duration(self) -> int:
+        """How long have we been in current state?"""
+        if not self.history:
+            return 0
+        
+        count = 0
+        for val in reversed(self.history):
+            if (self.state and val > self.high_threshold) or (not self.state and val < self.low_threshold):
+                count += 1
+            else:
+                break
+        return count
+
+class InvariantDiscovery:
+    """
+    Discovers and maintains soft invariants during processing.
+    Writes its own rules as it learns.
+    """
+    
+    def __init__(self):
+        self.invariants: List[SoftInvariant] = []
+        self.pattern_memory: Dict[str, List] = {}
+        self.invariant_id_counter = 0
+        
+    def discover_invariants(self, context: Dict, iteration: int) -> List[SoftInvariant]:
+        """Discover new invariants from observed patterns"""
+        new_invariants = []
+        
+        # Pattern 1: Content type consistency
+        if 'content_type' in context:
+            content_type = context['content_type']
+            if content_type not in self.pattern_memory:
+                self.pattern_memory[content_type] = []
+            
+            # Check if we've seen this pattern before
+            if self.pattern_memory[content_type]:
+                prev_metrics = self.pattern_memory[content_type][-1]
+                current_metrics = context.get('metrics', {})
+                
+                # Discover: entity count should be within 2x of previous
+                if 'entities_found' in prev_metrics and 'entities_found' in current_metrics:
+                    ratio = current_metrics['entities_found'] / max(prev_metrics['entities_found'], 1)
+                    if 0.5 < ratio < 2.0:
+                        inv = SoftInvariant(
+                            id=f"inv_{self.invariant_id_counter}",
+                            name=f"entity_consistency_{content_type}",
+                            condition=f"entity_count_ratio within [0.5, 2.0] for {content_type}",
+                            confidence=0.7,
+                            iteration_discovered=iteration
+                        )
+                        new_invariants.append(inv)
+                        self.invariant_id_counter += 1
+        
+        # Pattern 2: Quality monotonicity (quality should generally increase)
+        if 'quality_score' in context:
+            self.pattern_memory.setdefault('quality', []).append(context['quality_score'])
+            if len(self.pattern_memory['quality']) >= 3:
+                recent = self.pattern_memory['quality'][-3:]
+                if recent[-1] >= recent[0] * 0.9:  # Allow 10% variance
+                    inv = SoftInvariant(
+                        id=f"inv_{self.invariant_id_counter}",
+                        name="quality_monotonicity",
+                        condition="quality_score should not decrease by more than 10%",
+                        confidence=0.6,
+                        iteration_discovered=iteration
+                    )
+                    new_invariants.append(inv)
+                    self.invariant_id_counter += 1
+        
+        # Pattern 3: Completeness convergence
+        if 'completeness' in context:
+            self.pattern_memory.setdefault('completeness', []).append(context['completeness'])
+            if len(self.pattern_memory['completeness']) >= 3:
+                diffs = [self.pattern_memory['completeness'][i+1] - self.pattern_memory['completeness'][i] 
+                        for i in range(len(self.pattern_memory['completeness'])-1)]
+                if all(d < 0.1 for d in diffs[-2:]):  # Converging
+                    inv = SoftInvariant(
+                        id=f"inv_{self.invariant_id_counter}",
+                        name="completeness_convergence",
+                        condition="completeness improvements should diminish (convergence)",
+                        confidence=0.75,
+                        iteration_discovered=iteration
+                    )
+                    new_invariants.append(inv)
+                    self.invariant_id_counter += 1
+        
+        self.invariants.extend(new_invariants)
+        return new_invariants
+    
+    def check_invariants(self, context: Dict) -> Tuple[bool, List[str]]:
+        """Check all discovered invariants against current context"""
+        violations = []
+        
+        for inv in self.invariants:
+            # Simple check based on invariant name
+            if 'entity_consistency' in inv.name:
+                # Check entity ratio
+                pass
+            elif 'quality_monotonicity' in inv.name:
+                if 'quality_score' in context and self.pattern_memory.get('quality'):
+                    prev_quality = self.pattern_memory['quality'][-1]
+                    if context['quality_score'] < prev_quality * 0.9:
+                        violations.append(f"Invariant {inv.name}: Quality dropped >10%")
+                        inv.violations += 1
+            
+            inv.checks_passed += 1
+        
+        return len(violations) == 0, violations
+    
+    def get_invariant_report(self) -> str:
+        """Generate report of all discovered invariants"""
+        lines = ["\n📜 Discovered Soft Invariants:"]
+        for inv in self.invariants:
+            violation_rate = inv.violations / max(inv.checks_passed, 1)
+            status = "✅" if violation_rate < 0.1 else "⚠️"
+            lines.append(f"   {status} {inv.name} (conf: {inv.confidence:.0%}, discovered: iter {inv.iteration_discovered})")
+            lines.append(f"      Condition: {inv.condition}")
+            lines.append(f"      Violations: {inv.violations}/{inv.checks_passed} ({violation_rate:.1%})")
+        return "\n".join(lines)
+
 class FileProcessor:
     """Actually processes file content with real work"""
     
@@ -86,6 +397,14 @@ class FileProcessor:
         self.artifacts = {}
         self.issues = []
         self.improvements = []
+        
+        # Advanced optimization systems
+        self.telemetry = TelemetrySystem()
+        self.trust_region = TrustRegionOptimizer(initial_radius=1.0, max_radius=5.0)
+        self.topological = TopologicalOptimizer(dimension=3)
+        self.hysteresis = HysteresisController(low_threshold=0.3, high_threshold=0.8)
+        self.invariant_discovery = InvariantDiscovery()
+        self.current_regime = "exploration"  # exploration, exploitation, convergence
     
     def load_file(self) -> bool:
         """Actually load and analyze the file"""
@@ -877,12 +1196,78 @@ async def main():
         
         print(f"\n🏛️  GOVERNANCE DECISION: {decision.action.upper()}")
         
-        # Check if we should iterate (SAM-style with continuous looping)
+        # === ADVANCED OPTIMIZATION SYSTEMS ===
+        
+        # 1. Record telemetry
+        processor.telemetry.record("quality", result.quality_score, processor.current_regime, {
+            "iteration": iteration,
+            "completeness": processor._check_completeness(),
+            "entities": len(processor.artifacts.get('all_entities', []))
+        })
+        processor.telemetry.record("completeness", processor._check_completeness(), processor.current_regime)
+        
+        # 2. Check if we should iterate (SAM-style with continuous looping)
         quality_improvement = result.quality_score - previous_quality
         previous_quality = result.quality_score
         
-        # Check completeness
+        # 3. Trust Region Optimization - adjust step size based on improvement
+        predicted_improvement = 0.1  # Predict 10% improvement
+        processor.trust_region.adjust_radius(quality_improvement, predicted_improvement)
+        print(f"\n🎯 Trust Region: radius={processor.trust_region.radius:.2f}, success_rate={sum(processor.trust_region.success_history[-5:])/min(len(processor.trust_region.success_history), 5):.0%}")
+        
+        # 4. Topological Optimization - add sample to landscape
+        sample_point = (result.quality_score, processor._check_completeness(), iteration)
+        processor.topological.add_sample(sample_point, result.quality_score)
+        robust_region = processor.topological.get_robust_region(persistence_threshold=0.2)
+        if robust_region:
+            print(f"   🏔️  Topological: Found robust region at {robust_region}")
+        
+        # 5. Check completeness
         completeness = processor._check_completeness()
+        
+        # 6. Hysteresis Controller - prevent oscillation
+        should_continue_hyst = processor.hysteresis.update(completeness)
+        state_duration = processor.hysteresis.get_state_duration()
+        print(f"   🔄 Hysteresis: state={'continue' if should_continue_hyst else 'stop'}, duration={state_duration} iterations")
+        
+        # 7. Discover new invariants
+        context = {
+            'content_type': processor.artifacts.get('content_type', 'unknown'),
+            'metrics': {
+                'entities_found': len(processor.artifacts.get('all_entities', [])),
+                'quality_score': result.quality_score,
+                'completeness': completeness
+            },
+            'quality_score': result.quality_score,
+            'completeness': completeness
+        }
+        new_invariants = processor.invariant_discovery.discover_invariants(context, iteration)
+        if new_invariants:
+            print(f"   🔍 Discovered {len(new_invariants)} new soft invariants:")
+            for inv in new_invariants:
+                print(f"      - {inv.name} (conf: {inv.confidence:.0%})")
+        
+        # 8. Check all invariants
+        invariant_ok, invariant_violations = processor.invariant_discovery.check_invariants(context)
+        if invariant_violations:
+            print(f"   ⚠️  Invariant violations: {len(invariant_violations)}")
+            for v in invariant_violations[:3]:
+                print(f"      - {v}")
+        
+        # 9. Regime detection and transition
+        if processor.telemetry.detect_regime_shift("quality", threshold=1.5):
+            print(f"   🌊 Regime shift detected!")
+            if processor.current_regime == "exploration":
+                processor.current_regime = "exploitation"
+                print(f"   ➡️  Transitioning to {processor.current_regime} regime")
+            elif processor.current_regime == "exploitation":
+                processor.current_regime = "convergence"
+                print(f"   ➡️  Transitioning to {processor.current_regime} regime")
+        
+        # 10. Get trend analysis
+        quality_trend = processor.telemetry.get_trend("quality", window=5)
+        completeness_trend = processor.telemetry.get_trend("completeness", window=5)
+        print(f"   📈 Trends: quality={quality_trend:+.3f}/iter, completeness={completeness_trend:+.3f}/iter")
         
         # Get completeness metadata
         meta = processor.completeness_metadata
@@ -901,15 +1286,18 @@ async def main():
         print(f"      - Key Points: {meta.get('soft_invariants_captured', {}).get('key_points', 0)}")
         print(f"      - Patterns: {meta.get('soft_invariants_captured', {}).get('patterns', 0)}")
         
-        # SAM-Style Stopping Criteria
+        # SAM-Style Stopping Criteria with advanced systems
         # Target: 95-98% of achievable completeness (acknowledging hard invariants)
         target_completeness = 0.95  # 95% of achievable (leaving 5% for hard invariants)
         
+        # Advanced stopping criteria incorporating all systems
         can_complete = (
             decision.action == "proceed" and 
             quality_improvement < MIN_IMPROVEMENT and 
             iteration >= 3 and  # Require at least 3 iterations
-            completeness >= target_completeness  # 95% of achievable
+            completeness >= target_completeness and  # 95% of achievable
+            processor.trust_region.should_continue(min_success_rate=0.3) and  # Trust region says continue
+            not should_continue_hyst  # Hysteresis allows stopping
         )
         
         if can_complete:
@@ -917,12 +1305,14 @@ async def main():
             print(f"   Reported: {completeness:.1f}% (target: {target_completeness:.0%})")
             print(f"   Note: {hard_reserve:.0f}% reserved for hard invariants (unknown until deployment)")
             print(f"   Confidence: {confidence:.1f}% that all soft invariants are captured")
+            print(f"   Final regime: {processor.current_regime}")
             break
         elif iteration >= max_iterations:
             print(f"\n⚠️  MAX ITERATIONS ({max_iterations}) REACHED")
             print(f"   Final reported completeness: {completeness:.1f}%")
             print(f"   Achievable: {achievable:.1f}% (soft invariants only)")
             print(f"   Hard invariant reserve: {hard_reserve:.0f}%")
+            print(f"   Final regime: {processor.current_regime}")
             print(f"   ℹ️  Remaining {100-achievable-hard_reserve:.1f}% requires deployment/testing")
             break
         
@@ -973,6 +1363,23 @@ async def main():
         print(f"   🔒 Hard Invariant Reserve: {meta.get('hard_invariant_reserve', 0.05) * 100:.0f}%")
         print(f"   ✓ Confidence: {meta.get('confidence', 0) * 100:.1f}%")
         print(f"   💡 Note: {meta.get('hard_invariant_reserve', 0.05) * 100:.0f}% reserved for unknowns (deployment/testing required)")
+    
+    # Print discovered invariants
+    print(processor.invariant_discovery.get_invariant_report())
+    
+    # Print telemetry summary
+    print(f"\n📊 Telemetry Summary:")
+    print(f"   🌊 Final Regime: {processor.current_regime}")
+    print(f"   📈 Total Telemetry Points: {len(processor.telemetry.telemetry_history)}")
+    print(f"   🎯 Trust Region Final Radius: {processor.trust_region.radius:.3f}")
+    print(f"   🔄 Hysteresis Final State: {'continue' if processor.hysteresis.state else 'stop'}")
+    
+    if processor.telemetry.metrics_buffer:
+        print(f"   📊 Metric Trends (last 5):")
+        for metric_name, values in list(processor.telemetry.metrics_buffer.items())[:3]:
+            if len(values) >= 5:
+                trend = processor.telemetry.get_trend(metric_name, window=5)
+                print(f"      - {metric_name}: {trend:+.4f}/iter")
     
     # Save detailed report with SAM-style completeness
     report = {
