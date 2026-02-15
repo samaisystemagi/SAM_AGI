@@ -375,6 +375,141 @@ class InvariantDiscovery:
             lines.append(f"      Violations: {inv.violations}/{inv.checks_passed} ({violation_rate:.1%})")
         return "\n".join(lines)
 
+class MetaAgentController:
+    """
+    Lightweight Meta-Agent Controller (SAM-inspired but focused).
+    Monitors global completeness across contexts and triggers actions.
+    Much smaller than full SAM MetaAgent but captures the essence.
+    """
+    
+    def __init__(self, target_completeness: float = 0.98):
+        self.target_completeness = target_completeness  # How close to 100%
+        self.global_completeness = 0.0  # Across all contexts
+        self.contexts: Dict[str, Dict] = {}  # Track multiple files/contexts
+        self.interventions = []  # History of actions taken
+        self.learning_state = {
+            'successful_strategies': [],
+            'failed_strategies': [],
+            'context_patterns': {}
+        }
+        
+    def register_context(self, context_id: str, processor: FileProcessor):
+        """Register a new processing context (file)"""
+        self.contexts[context_id] = {
+            'processor': processor,
+            'completeness_history': [],
+            'status': 'active'
+        }
+        processor.meta_controller = self
+        
+    def update_completeness(self, context_id: str, completeness: float):
+        """Update completeness for a specific context"""
+        if context_id in self.contexts:
+            self.contexts[context_id]['completeness_history'].append({
+                'timestamp': time.time(),
+                'completeness': completeness
+            })
+            self._recalculate_global_completeness()
+            
+    def _recalculate_global_completeness(self):
+        """Calculate global completeness across all contexts"""
+        if not self.contexts:
+            return
+            
+        total = sum(
+            ctx['completeness_history'][-1]['completeness'] 
+            for ctx in self.contexts.values() 
+            if ctx['completeness_history']
+        )
+        self.global_completeness = total / len(self.contexts)
+        
+    def check_global_status(self) -> Dict:
+        """Check status across all contexts"""
+        status = {
+            'global_completeness': self.global_completeness,
+            'target': self.target_completeness,
+            'gap': self.target_completeness - self.global_completeness,
+            'contexts': len(self.contexts),
+            'ready_for_deployment': self.global_completeness >= self.target_completeness,
+            'interventions_needed': self._determine_interventions()
+        }
+        return status
+        
+    def _determine_interventions(self) -> List[str]:
+        """Determine what interventions are needed to reach target"""
+        interventions = []
+        
+        if self.global_completeness < self.target_completeness:
+            gap = self.target_completeness - self.global_completeness
+            
+            if gap > 0.1:
+                interventions.append("DEEP_ANALYSIS: Run additional iterations on all contexts")
+            elif gap > 0.05:
+                interventions.append("REFINEMENT: Focus on lowest completeness contexts")
+            else:
+                interventions.append("POLISH: Minor refinements needed")
+                
+        # Check for stuck contexts
+        for ctx_id, ctx in self.contexts.items():
+            if len(ctx['completeness_history']) >= 3:
+                recent = [h['completeness'] for h in ctx['completeness_history'][-3:]]
+                if max(recent) - min(recent) < 0.01:  # Stuck
+                    interventions.append(f"STUCK_CONTEXT: {ctx_id} needs strategy change")
+                    
+        return interventions
+        
+    def get_action_recommendation(self) -> str:
+        """Get next action recommendation based on global state"""
+        status = self.check_global_status()
+        
+        if status['ready_for_deployment']:
+            return "✅ GLOBAL TARGET REACHED: Ready for deployment"
+            
+        interventions = status['interventions_needed']
+        if interventions:
+            priority = interventions[0]
+            
+            if "DEEP_ANALYSIS" in priority:
+                return "🔍 Run deep analysis across all contexts - significant gap detected"
+            elif "REFINEMENT" in priority:
+                return "🎯 Focus on weakest contexts - selective refinement needed"
+            elif "POLISH" in priority:
+                return "✨ Minor polish needed - nearly ready"
+            elif "STUCK" in priority:
+                ctx_id = priority.split(": ")[1].split(" ")[0]
+                return f"🔄 Context {ctx_id} is stuck - try different approach"
+                
+        return f"📊 Continue processing - {status['gap']:.1%} gap to target"
+        
+    def print_global_report(self):
+        """Print comprehensive global status report"""
+        status = self.check_global_status()
+        
+        print("\n" + "=" * 70)
+        print("  🧠 META-AGENT CONTROLLER - GLOBAL STATUS")
+        print("=" * 70)
+        
+        print(f"\n🎯 Target: {status['target']:.1%} (approaching 100% with hard invariant awareness)")
+        print(f"📊 Global Completeness: {status['global_completeness']:.1%}")
+        print(f"📏 Gap to Target: {status['gap']:.1%}")
+        print(f"🌍 Active Contexts: {status['contexts']}")
+        
+        print(f"\n📋 Context Breakdown:")
+        for ctx_id, ctx in self.contexts.items():
+            if ctx['completeness_history']:
+                current = ctx['completeness_history'][-1]['completeness']
+                print(f"   • {ctx_id}: {current:.1%}")
+                
+        if status['interventions_needed']:
+            print(f"\n🔧 Interventions Needed:")
+            for i, intervention in enumerate(status['interventions_needed'], 1):
+                print(f"   {i}. {intervention}")
+        else:
+            print(f"\n✅ No interventions needed - on track")
+            
+        print(f"\n🎬 Recommendation: {self.get_action_recommendation()}")
+        print("=" * 70)
+
 class FileProcessor:
     """Actually processes file content with real work"""
     
@@ -405,6 +540,9 @@ class FileProcessor:
         self.hysteresis = HysteresisController(low_threshold=0.3, high_threshold=0.8)
         self.invariant_discovery = InvariantDiscovery()
         self.current_regime = "exploration"  # exploration, exploitation, convergence
+        
+        # Global meta-agent controller (monitors across contexts)
+        self.meta_controller = None  # Will be set by orchestrator
     
     def load_file(self) -> bool:
         """Actually load and analyze the file"""
@@ -1131,9 +1269,16 @@ async def main():
     print("  AUTOMATION FRAMEWORK - REAL FILE PROCESSING")
     print("🚀" * 35)
     
+    # Initialize meta-agent controller (monitors global completeness)
+    meta_agent = MetaAgentController(target_completeness=0.98)
+    
     # Initialize processor
     processor = FileProcessor(file_path)
     governance = TriCameralGovernance()
+    
+    # Register this context with meta-agent
+    context_id = Path(file_path).name
+    meta_agent.register_context(context_id, processor)
     
     # Load file
     if not processor.load_file():
@@ -1225,12 +1370,17 @@ async def main():
         # 5. Check completeness
         completeness = processor._check_completeness()
         
-        # 6. Hysteresis Controller - prevent oscillation
+        # 6. Meta-Agent Controller - update global status
+        meta_agent.update_completeness(context_id, completeness)
+        meta_status = meta_agent.check_global_status()
+        print(f"\n🧠 Meta-Agent: global={meta_status['global_completeness']:.1f}%, gap={meta_status['gap']:.1f}%, contexts={meta_status['contexts']}")
+        
+        # 7. Hysteresis Controller - prevent oscillation
         should_continue_hyst = processor.hysteresis.update(completeness)
         state_duration = processor.hysteresis.get_state_duration()
         print(f"   🔄 Hysteresis: state={'continue' if should_continue_hyst else 'stop'}, duration={state_duration} iterations")
         
-        # 7. Discover new invariants
+        # 8. Discover new invariants
         context = {
             'content_type': processor.artifacts.get('content_type', 'unknown'),
             'metrics': {
@@ -1247,14 +1397,14 @@ async def main():
             for inv in new_invariants:
                 print(f"      - {inv.name} (conf: {inv.confidence:.0%})")
         
-        # 8. Check all invariants
+        # 9. Check all invariants
         invariant_ok, invariant_violations = processor.invariant_discovery.check_invariants(context)
         if invariant_violations:
             print(f"   ⚠️  Invariant violations: {len(invariant_violations)}")
             for v in invariant_violations[:3]:
                 print(f"      - {v}")
         
-        # 9. Regime detection and transition
+        # 10. Regime detection and transition
         if processor.telemetry.detect_regime_shift("quality", threshold=1.5):
             print(f"   🌊 Regime shift detected!")
             if processor.current_regime == "exploration":
@@ -1264,7 +1414,7 @@ async def main():
                 processor.current_regime = "convergence"
                 print(f"   ➡️  Transitioning to {processor.current_regime} regime")
         
-        # 10. Get trend analysis
+        # 11. Get trend analysis
         quality_trend = processor.telemetry.get_trend("quality", window=5)
         completeness_trend = processor.telemetry.get_trend("completeness", window=5)
         print(f"   📈 Trends: quality={quality_trend:+.3f}/iter, completeness={completeness_trend:+.3f}/iter")
@@ -1380,6 +1530,9 @@ async def main():
             if len(values) >= 5:
                 trend = processor.telemetry.get_trend(metric_name, window=5)
                 print(f"      - {metric_name}: {trend:+.4f}/iter")
+    
+    # Print Meta-Agent Controller global report
+    meta_agent.print_global_report()
     
     # Save detailed report with SAM-style completeness
     report = {
