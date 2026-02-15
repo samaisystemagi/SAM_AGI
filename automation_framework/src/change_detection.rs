@@ -6,11 +6,12 @@ use chrono::{DateTime, Utc};
 use git2::{Repository, DiffOptions, DiffFindOptions};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 
 /// Advanced change tracker with git integration
 pub struct ChangeTracker {
-    repo: Option<Repository>,
+    repo: Option<Arc<Mutex<Repository>>>,
     change_history: Vec<Change>,
     context_cache: HashMap<String, ContextAnalysis>,
 }
@@ -18,7 +19,7 @@ pub struct ChangeTracker {
 impl ChangeTracker {
     pub fn new() -> Self {
         // Try to open git repository
-        let repo = Repository::discover(".").ok();
+        let repo = Repository::discover(".").ok().map(|r| Arc::new(Mutex::new(r)));
         
         if repo.is_some() {
             info!("Git repository detected - change tracking enabled");
@@ -47,15 +48,21 @@ impl ChangeTracker {
         }
         
         // Get git diff if repository exists
-        if let Some(ref repo) = self.repo {
-            match self.get_git_diff(repo, path) {
-                Ok(git_changes) => {
-                    changes.extend(git_changes);
+        if let Some(ref repo_mutex) = self.repo {
+            // Lock mutex
+            if let Ok(repo) = repo_mutex.lock() {
+                match self.get_git_diff(&repo, path) {
+                    Ok(git_changes) => {
+                        changes.extend(git_changes);
+                    }
+                    Err(e) => {
+                        warn!("Git diff failed, using filesystem: {}", e);
+                        changes.extend(self.get_filesystem_changes(path)?);
+                    }
                 }
-                Err(e) => {
-                    warn!("Git diff failed, using filesystem: {}", e);
-                    changes.extend(self.get_filesystem_changes(path)?);
-                }
+            } else {
+                 warn!("Failed to lock git repository mutex");
+                 changes.extend(self.get_filesystem_changes(path)?);
             }
         } else {
             // No git repo, use filesystem

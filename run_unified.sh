@@ -98,7 +98,7 @@ case $choice in
         python3 complete_sam_unified.py
         ;;
     2)
-        echo -e "\n${GREEN}🚀 Starting Automation Framework Demo...${NC}\n"
+        echo -e "\n${GREEN}🚀 Starting Automation Framework (Python Prototype)...${NC}\n"
         cd automation_framework/python
         python3 automation_bridge.py
         ;;

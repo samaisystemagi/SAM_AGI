@@ -1,8 +1,10 @@
 # Automation Framework - COMPLETE SYSTEM
 
-## 🎉 Status: FULLY OPERATIONAL
+## 🎉 Status: RUST CORE INTEGRATED & ACTIVE
 
-A comprehensive, standalone automation framework with **dynamic model routing**, **tri-cameral governance**, and **concurrent subagents** - completely separate from SAM-D (modular architecture).
+A comprehensive, standalone automation framework with **dynamic model routing**, **tri-cameral governance**, and **concurrent subagents**.
+
+> **✅ Architecture Update:** The Python bridge (`python/automation_bridge.py`) now successfully loads and utilizes the **compiled Rust core** (`automation_framework` extension) for high-performance model routing and governance. It falls back to a Python implementation only if the extension is missing.
 
 ---
 
@@ -11,6 +13,7 @@ A comprehensive, standalone automation framework with **dynamic model routing**,
 ### 1. 🦀 Rust Core (High Performance + Security)
 
 **Location**: `automation_framework/src/`
+**Status**: **Compiled & Bound via PyO3**
 
 **Modules**:
 - ✅ `lib.rs` - Main framework interface

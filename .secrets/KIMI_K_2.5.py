@@ -5,8 +5,14 @@ invoke_url = "https://integrate.api.nvidia.com/v1/chat/completions"
 stream = True
 
 
+import os
+
+api_key = os.getenv("NVAPI_KEY")
+if not api_key:
+    raise ValueError("NVAPI_KEY environment variable not set")
+
 headers = {
-  "Authorization": "Bearer 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",
+  "Authorization": f"Bearer {api_key}",
   "Accept": "text/event-stream" if stream else "application/json"
 }
 

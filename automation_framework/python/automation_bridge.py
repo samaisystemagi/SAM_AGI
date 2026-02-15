@@ -7,14 +7,23 @@ Features dynamic model routing, tri-cameral governance, and concurrent subagents
 
 import asyncio
 import json
-import subprocess
 import time
+import os
+import sys
 from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Any, Optional, Callable, Union
 from enum import Enum
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import random
+
+# Try to import the compiled Rust extension
+try:
+    import automation_framework as rust_core
+    RUST_AVAILABLE = True
+    print("✅ Loaded high-performance Rust core")
+except ImportError as e:
+    RUST_AVAILABLE = False
+    print(f"⚠️  Rust core not found, falling back to Python prototype. Error: {e}")
 
 class Branch(Enum):
     CIC = "Constructive Intelligence Core"
@@ -433,8 +442,9 @@ class ModelRouter:
         # Select best
         scores.sort(key=lambda x: x[1], reverse=True)
         best_model = scores[0][0]
+        best_score = scores[0][1]
         
-        print(f"Selected model: {self.models[best_model]['name']} (score: {scores[best_model]:.2f})")
+        print(f"Selected model: {self.models[best_model]['name']} (score: {best_score:.2f})")
         return best_model
     
     def auto_switch(self, task: str, context: Optional[str] = None) -> str:
@@ -472,24 +482,58 @@ class AutomationFramework:
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
+        
+        # Always initialize Python components for hybrid mode/fallback
         self.orchestrator = TriCameralOrchestrator()
         self.subagent_pool = SubagentPool(
             max_concurrent=self.config.get('max_concurrent_subagents', 10)
         )
         self.model_router = ModelRouter()
 
+        if RUST_AVAILABLE:
+            # Initialize Rust core
+            self._core = rust_core.AutomationFramework(
+                max_concurrent_subagents=self.config.get('max_concurrent_subagents', 10),
+                enable_resource_tracking=True,
+                enable_race_detection=True,
+                billing_threshold=100.0
+            )
+        else:
+            self._core = None
+
     async def execute_workflow(self, workflow_config: WorkflowConfig) -> Dict[str, Any]:
         """Execute a workflow with full automation and dynamic model selection"""
-
+        if self._core:
+            # TODO: Implement full Rust workflow execution binding
+            # For now, use Python logic but with Rust acceleration for specific parts if bound
+            pass
+            
+        # ... (Existing Python Implementation) ...
+        # [Preserving existing logic for now as the Rust binding covers model selection first]
+        
         # Step 0: Dynamic model selection for this workflow
-        selected_model = self.model_router.auto_switch(
-            workflow_config.name,
-            workflow_config.high_level_plan
-        )
+        if self._core:
+            selected_model = await self._core.auto_switch_model(
+                workflow_config.name,
+                workflow_config.high_level_plan
+            )
+        else:
+            selected_model = self.model_router.auto_switch(
+                workflow_config.name,
+                workflow_config.high_level_plan
+            )
+            
         print(f"Using model: {selected_model} for workflow execution")
 
         # Step 1: Tri-cameral governance decision
-        governance_decision = await self.orchestrator.evaluate_workflow(workflow_config)
+        # (Currently Python-only until full bindings are mapped)
+        if not self._core:
+            governance_decision = await self.orchestrator.evaluate_workflow(workflow_config)
+        else:
+            # Placeholder for Rust governance call
+            # governance_decision = await self._core.evaluate_workflow(...)
+            # Fallback to python for complex objects not yet bound
+             governance_decision = await TriCameralOrchestrator().evaluate_workflow(workflow_config)
 
         if not governance_decision.proceed:
             return {
@@ -504,31 +548,61 @@ class AutomationFramework:
         workflow_result = await workflow.execute()
 
         # Record model usage
-        self.model_router.record_usage(selected_model, 1000, 500, True)
+        if not self._core:
+            self.model_router.record_usage(selected_model, 1000, 500, True)
 
         return {
             'success': True,
             'governance': asdict(governance_decision),
             'workflow': workflow_result,
             'model_used': selected_model,
-            'model_stats': self.model_router.get_stats()
+            'model_stats': self.model_router.get_stats() if not self._core else {}
         }
-
-    def spawn_subagents(self, tasks: List[Dict], handler: Callable) -> List[SubagentResult]:
-        """Spawn parallel subagents"""
-        return self.subagent_pool.spawn_parallel(tasks, handler)
 
     def select_model(self, task: str, context: Optional[str] = None) -> str:
         """Dynamically select best model for a task"""
-        return self.model_router.select_model(task, context)
+        if self._core:
+            # This is an async method in Rust, so we need to run it
+            # But this Python method is sync. 
+            # We should probably expose an async version or run_until_complete
+            # For simplicity in this demo, we'll use a helper to run async if called synchronously
+            # Or better, just use the async version `select_model_async`
+            # But Rust futures need an executor.
+            # Using asyncio.run here might be unsafe if already in a loop.
+            # For this CLI demo, assume we can block.
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            if loop.is_running():
+                # If we are in a loop (unlikely for top-level call), return a Future?
+                # This bridge is tricky. Let's just create a new loop for the call if possible
+                pass
+            
+            return asyncio.run(self.select_model_async(task, context))
 
-    def auto_switch_model(self, task: str, context: Optional[str] = None) -> str:
-        """Automatically switch to best model"""
-        return self.model_router.auto_switch(task, context)
+        return self.model_router.select_model(task, context)
 
     def get_model_stats(self) -> Dict:
         """Get model routing statistics"""
+        # If using Rust core, stats might not be exposed yet, so return fallback or empty
+        if self._core:
+             # Rust binding doesn't expose stats yet in this version
+             return self.model_router.get_stats()
         return self.model_router.get_stats()
+
+    async def select_model_async(self, task: str, context: Optional[str] = None) -> str:
+        if self._core:
+            return await self._core.select_model(task, context)
+        return self.model_router.select_model(task, context)
+
+    async def auto_switch_model(self, task: str, context: Optional[str] = None) -> str:
+        """Automatically switch to best model"""
+        if self._core:
+            return await self._core.auto_switch_model(task, context)
+        return self.model_router.auto_switch(task, context)
 
 # Convenience functions for direct usage
 def tri_cameral_cycle(task: str, high_level: str, low_level: str) -> Dict:
@@ -557,64 +631,148 @@ def auto_switch_model(task: str, context: Optional[str] = None) -> str:
     return router.auto_switch(task, context)
 
 if __name__ == "__main__":
-    # Example usage
-    print("🚀 Automation Framework - Python Bridge with Dynamic Model Routing")
-    print("=" * 60)
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Automation Framework Bridge")
+    parser.add_argument("file", nargs="?", help="File to process (optional)")
+    parser.add_argument("--dry-run", action="store_true", help="Perform a dry run without side effects")
+    args = parser.parse_args()
 
-    # Example 1: Dynamic model selection for different tasks
-    print("\n📊 Dynamic Model Selection Examples:")
-    print("-" * 60)
+    try:
+        if args.file:
+            print(f"🚀 Processing file: {args.file}")
+            print("=" * 60)
+            
+            if not os.path.exists(args.file):
+                print(f"❌ File not found: {args.file}")
+                sys.exit(1)
+                
+            with open(args.file, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+                
+            print(f"📄 Loaded {len(content)} characters.")
+            
+            # Use the framework
+            framework = AutomationFramework()
+            
+            # 1. Analyze task based on content preview
+            task_description = f"Analyze and process log file: {os.path.basename(args.file)}"
+            context_preview = content[:1000]
+            
+            print("\n🤖 1. Model Selection")
+            model = framework.select_model(task_description, context_preview)
+            # Handle potential async result if not properly wrapped (wrapper is robust now)
+            if asyncio.iscoroutine(model):
+                 model = asyncio.run(model)
+            print(f"   Selected Model: {model}")
+            
+            # 2. Run Governance
+            print("\n🏛️  2. Governance Check")
+            config = WorkflowConfig(
+                name=f"Process {os.path.basename(args.file)}",
+                description="Analyze log content and extract insights",
+                high_level_plan="Read file, identify patterns, summarize",
+                low_level_plan="Chunk processing with subagents",
+                risk_level=0.3, # Low risk for analysis
+                invariants=["no_data_loss", "privacy_preservation"]
+            )
+            
+            # Execute workflow
+            if args.dry_run:
+                print("   [Dry Run] Simulating workflow execution...")
+                decision = asyncio.run(framework.orchestrator.evaluate_workflow(config))
+                print(f"   Governance Decision: {'✅ PROCEED' if decision.proceed else '❌ STOP'}")
+                print(f"   Confidence: {decision.confidence:.2f}")
+            else:
+                print("   Executing workflow...")
+                result = asyncio.run(framework.execute_workflow(config))
+                
+                print("\n✅ Execution Complete")
+                print(f"   Success: {result['success']}")
+                if 'governance' in result:
+                     print(f"   Governance: {result['governance'].get('confidence', 0.0):.2f} confidence")
+                
+                if result['success']:
+                    print("\n📊 Model Usage Stats:")
+                    stats = framework.get_model_stats()
+                    if stats and 'usage_stats' in stats:
+                        for m, s in stats['usage_stats'].items():
+                            if s['calls'] > 0:
+                                print(f"   - {m}: {s['calls']} calls, ${s['cost']:.4f}")
 
-    tasks = [
-        ("Quick code review", "simple"),
-        ("Complex architectural reasoning for distributed systems", "complex"),
-        ("Safety-critical security audit", "critical"),
-        ("Creative brainstorming for UI design", "creative"),
-    ]
+        else:
+            # Existing Demo Mode
+            print("🚀 Automation Framework - Python Bridge with Dynamic Model Routing")
+            print("=" * 60)
+            
+            # ... (Keep existing demo logic here)
+            # Example 1: Dynamic model selection for different tasks
+            print("\n📊 Dynamic Model Selection Examples:")
+            print("-" * 60)
 
-    router = ModelRouter()
-    for task, complexity in tasks:
-        model = router.select_model(task)
-        stats = router.get_stats()
-        print(f"\nTask: {task}")
-        print(f"  Complexity: {complexity}")
-        print(f"  Selected Model: {stats['available_models'][list(stats['available_models']).index(model)]}")
+            tasks = [
+                ("Quick code review", "simple"),
+                ("Complex architectural reasoning for distributed systems", "complex"),
+                ("Safety-critical security audit", "critical"),
+                ("Creative brainstorming for UI design", "creative"),
+            ]
 
-    # Example 2: Tri-cameral cycle with automatic model selection
-    print("\n\n🏛️ Tri-Cameral Cycle with Dynamic Model Selection:")
-    print("-" * 60)
+            # Use the framework which uses Rust core if available
+            framework = AutomationFramework()
+            
+            for task, complexity in tasks:
+                # select_model might be sync or async depending on implementation
+                # For this demo, we assume the wrapper handles it or we call the sync version
+                model = framework.select_model(task)
+                if asyncio.iscoroutine(model):
+                    model = asyncio.run(model)
+                print(f"\nTask: {task}")
+                print(f"  Complexity: {complexity}")
+                print(f"  Selected Model: {model}")
 
-    result = tri_cameral_cycle(
-        task="Implement Phase 2",
-        high_level="Add Power/Control systems",
-        low_level="Create P_t and C_t classes"
-    )
+            # Example 2: Tri-cameral cycle with automatic model selection
+            print("\n\n🏛️ Tri-Cameral Cycle with Dynamic Model Selection:")
+            print("-" * 60)
 
-    print(f"\nModel Used: {result.get('model_used', 'N/A')}")
-    print(f"Success: {result['success']}")
-    if result['success']:
-        print(f"Phases Completed: {result['workflow']['phases_completed']}")
+            result = tri_cameral_cycle(
+                task="Implement Phase 2",
+                high_level="Add Power/Control systems",
+                low_level="Create P_t and C_t classes"
+            )
 
-    # Example 3: Auto-switching demonstration
-    print("\n\n🔄 Auto-Switching Demonstration:")
-    print("-" * 60)
+            print(f"\nModel Used: {result.get('model_used', 'N/A')}")
+            print(f"Success: {result['success']}")
+            if result['success']:
+                print(f"Phases Completed: {result['workflow']['phases_completed']}")
 
-    sequential_tasks = [
-        "Quick status check",
-        "Deep analysis of system architecture",
-        "Safety review of authentication code",
-        "Generate creative ideas for new features"
-    ]
+            # Example 3: Auto-switching demonstration
+            print("\n\n🔄 Auto-Switching Demonstration:")
+            print("-" * 60)
 
-    for i, task in enumerate(sequential_tasks, 1):
-        model = auto_switch_model(task)
-        print(f"{i}. Task: {task[:50]}...")
-        print(f"   Model: {model}")
+            sequential_tasks = [
+                "Quick status check",
+                "Deep analysis of system architecture",
+                "Safety review of authentication code",
+                "Generate creative ideas for new features"
+            ]
 
-    print("\n✅ Automation Framework Ready!")
-    print("Features:")
-    print("  • Tri-cameral governance (CIC/AEE/CSF)")
-    print("  • Dynamic model routing")
-    print("  • Concurrent subagents")
-    print("  • Resource management")
-    print("  • Cyclic workflow execution")
+            for i, task in enumerate(sequential_tasks, 1):
+                # Use async call via helper or direct run
+                model = framework.auto_switch_model(task)
+                if asyncio.iscoroutine(model):
+                    model = asyncio.run(model)
+                print(f"{i}. Task: {task[:50]}...")
+                print(f"   Model: {model}")
+
+            print("\n✅ Automation Framework Ready!")
+            print("Features:")
+            print("  • Tri-cameral governance (CIC/AEE/CSF)")
+            print("  • Dynamic model routing")
+            print("  • Concurrent subagents")
+            print("  • Resource management")
+            print("  • Cyclic workflow execution")
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"\n❌ Crashed: {e}")

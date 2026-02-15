@@ -90,6 +90,7 @@ SAM_Code_Backups/
 # files created during runtime/temporary outputs
 *.cpython-*
 secrets/
+.secrets/
 .aider*
 
 # ChatGPT conversation logs
@@ -100,3 +101,6 @@ ChatGPT_*.txt
 
 # Compiled Python extensions in root (should be in build/)
 *.cpython-*.so
+
+.gemini/
+gha-creds-*.json

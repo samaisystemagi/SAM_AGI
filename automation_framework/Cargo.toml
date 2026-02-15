@@ -30,14 +30,15 @@ reqwest = { version = "0.11", features = ["json"] }
 async-trait = "0.1"
 regex = "1.10"
 pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
+pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"], optional = true }
 
 [features]
 default = []
-python-bindings = ["pyo3"]
+python-bindings = ["pyo3", "pyo3-asyncio"]
 
 [lib]
 name = "automation_framework"
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "automation_cli"

@@ -27,10 +27,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[cfg(feature = "python-bindings")]
+use pyo3::prelude::*;
+
 pub use errors::{AutomationError, Result};
 pub use crate::resource::ResourceQuotas;
 
 /// Main automation framework handle
+#[derive(Clone)]
 pub struct AutomationFramework {
     config: FrameworkConfig,
     resource_manager: Arc<RwLock<resource::ResourceManager>>,
@@ -38,6 +42,13 @@ pub struct AutomationFramework {
     subagent_pool: Arc<subagent::SubagentPool>,
     change_tracker: Arc<change_detection::ChangeTracker>,
     model_router: Arc<RwLock<model_router::ModelRouter>>,
+}
+
+#[cfg(feature = "python-bindings")]
+#[pymodule]
+fn automation_framework(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<python_bindings::PyAutomationFramework>()?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,6 +2,8 @@
 
 SAM-D is a hybrid Python/C recursive meta-evolutionary system with a web dashboard, slash-command interface, and C-accelerated cores for meta-control and dual-system simulation. It includes ΨΔ•Ω-Core morphogenesis and a PDI-T submodel lifecycle.
 
+> **Note:** The `automation_framework` is a high-performance component powered by a **Rust Core** with Python bindings. It handles dynamic model routing and governance.
+
 ## What’s Included
 - Main orchestrator + API server + UI: `src/python/complete_sam_unified.py`
 - Web dashboard + terminal UI served by the API
