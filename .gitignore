@@ -104,3 +104,4 @@ ChatGPT_*.txt
 
 .gemini/
 gha-creds-*.json
+processing_reports/

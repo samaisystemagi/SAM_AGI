@@ -1757,7 +1757,11 @@ async def main():
         "completion_status": "achievable_reached" if (processor.completeness_metadata.get('reported', 0) >= 0.95) else "max_iterations"
     }
     
-    report_file = f"processing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    # Create reports directory if it doesn't exist
+    reports_dir = Path("processing_reports")
+    reports_dir.mkdir(exist_ok=True)
+    
+    report_file = reports_dir / f"processing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(report_file, 'w') as f:
         json.dump(report, f, indent=2, default=str)
     
