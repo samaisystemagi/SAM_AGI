@@ -253,6 +253,28 @@ class SAMCore:
             self.lib.sam_grow.argtypes = [ctypes.c_void_p, ctypes.c_int]
             self.lib.sam_grow.restype = ctypes.c_int
             
+            # Enhanced functions
+            self.lib.sam_get_identity_overlap.argtypes = [ctypes.c_void_p]
+            self.lib.sam_get_identity_overlap.restype = ctypes.c_double
+            
+            self.lib.sam_get_epistemic_rank.argtypes = [ctypes.c_void_p]
+            self.lib.sam_get_epistemic_rank.restype = ctypes.c_double
+            
+            self.lib.sam_get_growth_count.argtypes = [ctypes.c_void_p]
+            self.lib.sam_get_growth_count.restype = ctypes.c_int
+            
+            self.lib.sam_get_invariant_violations.argtypes = [ctypes.c_void_p]
+            self.lib.sam_get_invariant_violations.restype = ctypes.c_int
+            
+            self.lib.sam_get_pressure.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            self.lib.sam_get_pressure.restype = ctypes.c_double
+            
+            self.lib.sam_get_invariant_violation_str.argtypes = [ctypes.c_int]
+            self.lib.sam_get_invariant_violation_str.restype = ctypes.c_char_p
+            
+            self.lib.sam_reset_invariants.argtypes = [ctypes.c_void_p]
+            self.lib.sam_reset_invariants.restype = None
+            
             # Create C state
             self.c_state = self.lib.sam_create(self.latent_dim)
             print(f"   Created C SAM state: {self.c_state}")
@@ -283,7 +305,10 @@ class SAMCore:
             return self._python_step(observation, gradient)
     
     def _c_step(self, obs: np.ndarray, grad: np.ndarray) -> Dict[str, Any]:
-        """C implementation step using stub library"""
+        """C implementation step using enhanced stub library"""
+        if not self.lib or not self.c_state:
+            return self._python_step(obs, grad)
+        
         # Convert numpy to C array
         obs_flat = obs.flatten()[:self.latent_dim]
         if len(obs_flat) < self.latent_dim:
@@ -296,17 +321,42 @@ class SAMCore:
         self.lib.sam_step(self.c_state, obs_ctype, reward)
         
         # Check invariants
-        invariants_ok = self.lib.sam_check_invariants(self.c_state)
+        invariant_code = self.lib.sam_check_invariants(self.c_state)
+        invariants_ok = (invariant_code == 0)
         
-        # Get metrics
+        # Get detailed metrics
         uncertainty = self.lib.sam_get_uncertainty(self.c_state)
         step_count = self.lib.sam_get_step_count(self.c_state)
+        identity_overlap = self.lib.sam_get_identity_overlap(self.c_state)
+        epistemic_rank = self.lib.sam_get_epistemic_rank(self.c_state)
+        growth_count = self.lib.sam_get_growth_count(self.c_state)
+        violations = self.lib.sam_get_invariant_violations(self.c_state)
+        
+        # Get pressure signals
+        pressures = {
+            'perplexity': self.lib.sam_get_pressure(self.c_state, 0),
+            'gradient_norm': self.lib.sam_get_pressure(self.c_state, 1),
+            'latency': self.lib.sam_get_pressure(self.c_state, 2),
+            'entropy': self.lib.sam_get_pressure(self.c_state, 3),
+        }
+        
+        # Get violation string if any
+        violation_str = None
+        if not invariants_ok:
+            violation_str = self.lib.sam_get_invariant_violation_str(invariant_code).decode('utf-8')
         
         return {
             'success': True,
-            'invariants_ok': invariants_ok == 1,
+            'invariants_ok': invariants_ok,
+            'invariant_code': invariant_code,
+            'violation_type': violation_str,
             'unsolvability': uncertainty,
             'step_count': step_count,
+            'identity_overlap': identity_overlap,
+            'epistemic_rank': epistemic_rank,
+            'growth_count': growth_count,
+            'invariant_violations': violations,
+            'pressures': pressures,
         }
     
     def _python_step(self, obs: np.ndarray, grad: np.ndarray) -> Dict[str, Any]:

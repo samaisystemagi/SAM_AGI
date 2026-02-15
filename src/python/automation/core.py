@@ -722,10 +722,30 @@ class FileProcessor:
             # Aggregate SAM metrics
             if sam_results:
                 avg_uncertainty = sum(r.get('unsolvability', 0) for r in sam_results) / len(sam_results)
+                avg_identity = sum(r.get('identity_overlap', 0) for r in sam_results) / len(sam_results)
+                avg_epistemic = sum(r.get('epistemic_rank', 0) for r in sam_results) / len(sam_results)
+                
+                # Check for invariant violations
+                violations = [r for r in sam_results if not r.get('invariants_ok', True)]
+                
                 self.artifacts['sam_uncertainty'] = avg_uncertainty
                 self.artifacts['sam_processed'] = len(sam_results)
+                self.artifacts['sam_identity_overlap'] = avg_identity
+                self.artifacts['sam_epistemic_rank'] = avg_epistemic
+                self.artifacts['sam_violations'] = len(violations)
+                
                 print(f"   ✅ SAM processed {len(sam_results)} chunks")
                 print(f"   📊 Avg uncertainty: {avg_uncertainty:.4f}")
+                print(f"   🔄 Identity overlap: {avg_identity:.4f}")
+                print(f"   🧠 Epistemic rank: {avg_epistemic:.4f}")
+                
+                if violations:
+                    print(f"   ⚠️  Hard invariant violations: {len(violations)}")
+                    for v in violations[:3]:
+                        vtype = v.get('violation_type', 'UNKNOWN')
+                        print(f"      - {vtype}")
+                else:
+                    print(f"   ✅ All hard invariants maintained")
         
         # Aggregate results
         self._aggregate_results()
