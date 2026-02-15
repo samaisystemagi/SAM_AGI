@@ -901,13 +901,25 @@ class FileProcessor:
         # Actually analyze the chunk
         lines = chunk.split('\n')
         
-        # Extract key sentences (first sentence of each paragraph)
+        # === HIGH QUALITY KEY POINT EXTRACTION ===
+        # Extract ALL sentences that contain important information
         paragraphs = [p.strip() for p in chunk.split('\n\n') if p.strip()]
         key_sentences = []
-        for para in paragraphs[:min(3 + iteration, 8)]:  # More paragraphs in later iterations
-            sentences = para.split('. ')
-            if sentences and len(sentences[0]) > 10:
-                key_sentences.append(sentences[0])
+        
+        importance_keywords = ['implement', 'create', 'build', 'function', 'class', 
+                              'should', 'must', 'need', 'important', 'critical',
+                              'config', 'parameter', 'version', 'error', 'fix',
+                              'optimization', 'performance', 'test', 'deploy',
+                              'require', 'ensure', 'verify', 'note', 'warning']
+        
+        for para in paragraphs:
+            sentences = re.split(r'(?<=[.!?])\s+', para)
+            for sent in sentences:
+                sent = sent.strip()
+                # High quality: substantial sentences with keywords
+                if len(sent) > 30 and len(sent) < 300:
+                    if any(kw in sent.lower() for kw in importance_keywords):
+                        key_sentences.append(sent)
         
         # Extract entities with increasing depth per iteration
         entities = []
@@ -998,8 +1010,8 @@ class FileProcessor:
         summary = ' '.join(key_sentences)[:summary_length] if key_sentences else chunk[:summary_length]
         
         result["summary"] = summary
-        result["key_points"] = key_sentences[:min(5 + iteration * 2, 15)]
-        result["entities"] = unique_entities[:min(20 + iteration * 10, 60)]
+        result["key_points"] = key_sentences[:min(10 + iteration * 5, 50)]  # MUCH more key points
+        result["entities"] = unique_entities[:min(50 + iteration * 30, 300)]  # MANY more entities
         result["patterns"] = patterns
         result["line_count"] = len(lines)
         result["processed"] = True
@@ -1025,9 +1037,9 @@ class FileProcessor:
                 all_entities.extend(chunk_result.get('entities', []))
                 all_key_points.extend(chunk_result.get('key_points', []))
         
-        # Store aggregated artifacts
+        # Store aggregated artifacts - HIGH QUALITY: keep more data
         self.artifacts['all_entities'] = list(set(all_entities))
-        self.artifacts['all_key_points'] = all_key_points[:20]  # Top 20
+        self.artifacts['all_key_points'] = all_key_points[:200]  # Keep top 200 for high quality
         self.artifacts['processed_chunk_count'] = len(self.processed_chunks)
         
         self.metrics["chunks_processed"] = len(self.processed_chunks)
@@ -1139,31 +1151,61 @@ class FileProcessor:
         return reported_completeness
     
     def _calculate_quality(self) -> float:
-        """Calculate overall quality score"""
+        """
+        Calculate overall quality score with HIGH standards.
+        Targets: 0.90+ for excellent, 0.80+ for good, 0.70+ for acceptable
+        """
         if not self.processed_chunks:
             return 0.0
         
         scores = []
         
-        # Coverage score
+        # 1. Coverage score (30%) - Completeness matters most
         coverage = self._check_completeness()
-        scores.append(coverage * 0.3)
+        scores.append(coverage * 0.30)
         
-        # Entity extraction score
+        # 2. Entity extraction richness (25%) - Expect 500+ entities for large files
         entities = len(self.artifacts.get('all_entities', []))
-        entity_score = min(entities / 10, 1.0) * 0.2
+        # Scale: 0 entities = 0, 250 entities = 0.5, 500+ entities = 1.0
+        entity_score = min(entities / 500, 1.0) * 0.25
         scores.append(entity_score)
         
-        # Key points score
+        # 3. Key points extraction (20%) - Expect 100+ key points
         key_points = len(self.artifacts.get('all_key_points', []))
-        kp_score = min(key_points / 10, 1.0) * 0.2
+        kp_score = min(key_points / 100, 1.0) * 0.20
         scores.append(kp_score)
         
-        # Issue penalty
-        issue_penalty = len(self.issues) * 0.1
-        scores.append(max(0, 0.3 - issue_penalty))
+        # 4. Pattern detection (15%) - Expect rich pattern diversity
+        patterns = self.artifacts.get('patterns', {})
+        pattern_score = min(len(patterns) / 10, 1.0) * 0.15
+        scores.append(pattern_score)
         
-        return sum(scores)
+        # 5. Chunk quality average (10%) - Average quality across all chunks
+        chunk_qualities = [c.get('quality_score', 0) for c in self.processed_chunks]
+        avg_chunk_quality = sum(chunk_qualities) / len(chunk_qualities) if chunk_qualities else 0
+        scores.append(avg_chunk_quality * 0.10)
+        
+        # Calculate base quality
+        base_quality = sum(scores)
+        
+        # 6. Issue penalty (can reduce quality significantly)
+        issue_penalty = min(len(self.issues) * 0.05, 0.3)  # Max 30% penalty
+        final_quality = max(0, base_quality - issue_penalty)
+        
+        # Store for reference
+        self.metrics["quality_score"] = final_quality
+        self.metrics["quality_breakdown"] = {
+            "coverage": coverage * 0.30,
+            "entities": entity_score,
+            "key_points": kp_score,
+            "patterns": pattern_score,
+            "chunk_quality": avg_chunk_quality * 0.10,
+            "issue_penalty": -issue_penalty,
+            "base_quality": base_quality,
+            "final_quality": final_quality
+        }
+        
+        return final_quality
     
     def _attempt_fix(self, issue: str) -> bool:
         """Attempt to fix an automated processing issue with real logic."""
